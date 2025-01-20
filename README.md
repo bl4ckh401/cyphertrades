@@ -100,7 +100,7 @@ hardhat
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/cypherpups
+git clone https://github.com/bl4ckh401/cyphertrades.git
 
 # Install dependencies
 npm install
@@ -116,7 +116,7 @@ cp .env.example .env
 npx hardhat node
 
 # Deploy contracts
-npx hardhat ignition deploy ignition/modules/Factory.js --network localhost
+npx hardhat run scripts/Deploy.js --network sepolia
 
 # Start frontend
 npm run dev
@@ -136,10 +136,10 @@ npx hardhat test test/CypherPupsToken.js
 
 ```bash
 # Deploy to testnet (Sepolia)
-npx hardhat ignition deploy ignition/modules/Factory.js --network sepolia
+npx hardhat run scripts/Deploy.js --network sepolia
 
 # Deploy to mainnet
-npx hardhat ignition deploy ignition/modules/Factory.js --network mainnet
+npx hardhat run scripts/Deploy.js --network mainnet
 ```
 
 ## Contract Addresses

@@ -14,7 +14,7 @@ module.exports = {
   },
   networks: {
     sepolia: {
-      url: process.env.SEPOLIA_URL || "https://base-sepolia.g.alchemy.com/v2/hIwrt1-FZosYx2wb8hxkSAKVEuYeph1-",
+      url: process.env.SEPOLIA_URL || "https://base-sepolia.g.alchemy.com/v2/your-alchemy-url",
       accounts: [`0x${process.env.SEPOLIA_PRIVATE_KEY}`],
       timeout: 5*60*1000, // 5 minutes
     },
