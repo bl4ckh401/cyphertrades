@@ -61,14 +61,15 @@ contract CypherPupsToken is ERC20, ReentrancyGuard, Pausable, AccessControl {
     event Withdrawn(address indexed payee, uint256 amount);
 
     // Constants
-    uint256 public constant TOTAL_SUPPLY = 50_000_000_000 * 1e18; // 50B tokens with 18 decimals
-    uint256 public constant INITIAL_VIRTUAL_TOKEN_RESERVE = 1.06e27; // 1.06 * 10^27
-    uint256 public constant INITIAL_VIRTUAL_ETH_RESERVE = 1.6e18; // 1.6 ETH
-    uint256 public constant MIGRATION_THRESHOLD = 799_538_871 * 1e18; // ~80% of total supply
-    uint256 public constant MIGRATION_FEE = 0.15 ether; // Fee for migration
+    uint256 public constant TOTAL_SUPPLY = 1000000000 * 1e18; // 1B tokens
+    uint256 public constant INITIAL_VIRTUAL_TOKEN_RESERVE = 1000000000 * 10**18; // 1B tokens
+    uint256 public constant INITIAL_VIRTUAL_ETH_RESERVE = 2e18; // 1.6 ETH
+    uint256 public constant MIGRATION_THRESHOLD = 799_538_871 * 1e18; // 79.95% of total supply
+    uint256 public constant MIGRATION_FEE = 0.015 ether; // Fee for migration
     uint256 public constant MIN_PURCHASE = 0.01 ether; // Minimum purchase amount
     uint256 public constant MAX_PURCHASE = 50 ether; // Maximum purchase amount
     uint256 public constant PRICE_IMPACT_LIMIT = 10; // 10% max price impact
+
     mapping(address => uint256) private _pendingWithdrawals;
 
     // State variables
@@ -99,14 +100,17 @@ contract CypherPupsToken is ERC20, ReentrancyGuard, Pausable, AccessControl {
     constructor(
         address _router,
         address _factory,
-        address _admin
-    ) ERC20("CypherPups", "CPHP") {
-        require(_router != address(0), InvalidAddress());
-        require(_factory != address(0), InvalidAddress());
-        require(_admin != address(0), InvalidAddress());
+        address _admin,
+        string memory _name,
+        string memory _symbol
+    ) ERC20(_name, _symbol) {
+        if (_router == address(0)) revert InvalidAddress();
+        if (_factory == address(0)) revert InvalidAddress();
+        if (_admin == address(0)) revert InvalidAddress();
 
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
         _grantRole(ADMIN_ROLE, _admin);
+        
 
         virtualTokenReserve = INITIAL_VIRTUAL_TOKEN_RESERVE;
         virtualEthReserve = INITIAL_VIRTUAL_ETH_RESERVE;
@@ -119,36 +123,31 @@ contract CypherPupsToken is ERC20, ReentrancyGuard, Pausable, AccessControl {
 
     // Modifiers
     modifier whenNotMigrated() {
-        require(!migrated, AlreadyMigrated());
+        if (migrated) revert AlreadyMigrated();
         _;
     }
 
     modifier withinPriceImpact(uint256 priceImpact) {
-        require(priceImpact <= PRICE_IMPACT_LIMIT, ExceedsPriceImpact());
+        if (priceImpact > PRICE_IMPACT_LIMIT) revert ExceedsPriceImpact();
         _;
     }
 
     modifier rateLimit(address user) {
-        require(
-            block.timestamp - lastActionTime[user] >= RATE_LIMIT_INTERVAL ||
-                actionCounter[user] < MAX_ACTIONS_IN_INTERVAL,
-            ExceededRateLimit()
-        );
+        if (
+            block.timestamp - lastActionTime[user] < RATE_LIMIT_INTERVAL &&
+            actionCounter[user] >= MAX_ACTIONS_IN_INTERVAL
+        ) revert ExceededRateLimit();
 
         if (block.timestamp - lastActionTime[user] >= RATE_LIMIT_INTERVAL) {
             actionCounter[user] = 1;
         } else {
-            actionCounter[user] = actionCounter[user] + 1;
+            actionCounter[user] += 1;
         }
 
         lastActionTime[user] = block.timestamp;
         _;
     }
 
-    /**
-     * @notice Buy tokens with ETH
-     * @dev Implements bonding curve purchase mechanism
-     */
     function buy()
         external
         payable
@@ -156,21 +155,27 @@ contract CypherPupsToken is ERC20, ReentrancyGuard, Pausable, AccessControl {
         whenNotPaused
         whenNotMigrated
         rateLimit(msg.sender)
+        withinPriceImpact(
+            calculatePriceImpact(msg.value, virtualEthReserve)
+        )
     {
-        require(msg.value >= MIN_PURCHASE, InvalidAmount());
-        require(msg.value <= MAX_PURCHASE, InvalidAmount());
-        uint256 tokenAmount = calculatePurchaseReturn(msg.value);
-        require(tokenAmount > 0, InvalidAmount());
-        require(totalSupply() + tokenAmount <= TOTAL_SUPPLY, InvalidAmount());
-        uint256 priceImpact = calculatePriceImpact(
-            msg.value,
-            virtualEthReserve
-        );
-        require(priceImpact <= PRICE_IMPACT_LIMIT, ExceedsPriceImpact());
+        if (msg.value < MIN_PURCHASE) revert InvalidAmount();
+        if (msg.value > MAX_PURCHASE) revert InvalidAmount();
 
-        virtualEthReserve = virtualEthReserve + msg.value;
-        virtualTokenReserve = virtualTokenReserve - tokenAmount;
-        totalCollectedETH = totalCollectedETH + msg.value;
+        uint256 tokenAmount = calculatePurchaseReturn(msg.value);
+        if (tokenAmount == 0) revert InvalidAmount();
+        if (totalSupply() + tokenAmount > TOTAL_SUPPLY)
+            revert ExceedsTotalSupply();
+
+        // uint256 priceImpact = calculatePriceImpact(
+        //     msg.value,
+        //     virtualEthReserve
+        // );
+        // if (priceImpact > PRICE_IMPACT_LIMIT) revert ExceedsPriceImpact();
+
+        virtualEthReserve += msg.value;
+        virtualTokenReserve -= tokenAmount;
+        totalCollectedETH += msg.value;
 
         bool shouldMigrate = totalSupply() + tokenAmount >= MIGRATION_THRESHOLD;
 
@@ -184,10 +189,6 @@ contract CypherPupsToken is ERC20, ReentrancyGuard, Pausable, AccessControl {
         }
     }
 
-    /**
-     * @notice Sell tokens back to the contract
-     * @param tokenAmount Amount of tokens to sell
-     */
     function sell(
         uint256 tokenAmount
     )
@@ -197,25 +198,19 @@ contract CypherPupsToken is ERC20, ReentrancyGuard, Pausable, AccessControl {
         whenNotMigrated
         rateLimit(msg.sender)
     {
-        require(tokenAmount > 0, InvalidAmount());
-        require(balanceOf(msg.sender) >= tokenAmount, InsufficientBalance());
+        if (tokenAmount == 0) revert InvalidAmount();
+        if (balanceOf(msg.sender) < tokenAmount) revert InsufficientBalance();
 
         uint256 ethAmount = calculateSaleReturn(tokenAmount);
-        require(ethAmount > 0, InvalidAmount());
-        require(address(this).balance >= ethAmount, InsufficientBalance());
+        if (ethAmount == 0) revert InvalidAmount();
 
-        uint256 priceImpact = calculatePriceImpact(
-            ethAmount,
-            virtualEthReserve
-        );
-        require(priceImpact <= PRICE_IMPACT_LIMIT, ExceedsPriceImpact());
+        if (address(this).balance < ethAmount) revert InsufficientBalance();
 
-        _burn(msg.sender, tokenAmount);   
+        _burn(msg.sender, tokenAmount);
 
-        // Correct math operations:
-        virtualTokenReserve = virtualTokenReserve + tokenAmount; // Correct: Adding tokens
-        virtualEthReserve = virtualEthReserve - ethAmount; // Fixed: Subtracting ETH
-        totalCollectedETH = totalCollectedETH - ethAmount;
+        virtualTokenReserve += tokenAmount;
+        virtualEthReserve -= ethAmount;
+        totalCollectedETH -= ethAmount;
 
         _queueWithdrawal(msg.sender, ethAmount);
 
@@ -224,51 +219,36 @@ contract CypherPupsToken is ERC20, ReentrancyGuard, Pausable, AccessControl {
     }
 
     function _queueWithdrawal(address payee, uint256 amount) private {
-        require(payee != address(0), InvalidAddress());
-        _pendingWithdrawals[payee] = _pendingWithdrawals[payee] + amount;
+        if (payee == address(0)) revert InvalidAddress();
+        _pendingWithdrawals[payee] += amount;
         emit WithdrawalQueued(payee, amount);
-    }
-
-    function withdrawPendingPayments() external nonReentrant {
-        uint256 amount = _pendingWithdrawals[msg.sender];
-        require(amount > 0, NoPendingPayments());
-        require(
-            address(this).balance >= amount,
-            "Insufficient contract balance"
-        );
-
-        // Clear pending withdrawal before transfer to prevent reentrancy
-        _pendingWithdrawals[msg.sender] = 0;
-
-        // Transfer ETH to user
-        (bool success, ) = msg.sender.call{value: amount}("");
-        require(success, "ETH transfer failed");
-
-        emit Withdrawn(msg.sender, amount);
     }
 
     function pendingWithdrawals(address payee) external view returns (uint256) {
         return _pendingWithdrawals[payee];
     }
 
-    /**
-     * @notice Calculate price impact of a trade
-     * @param tradeSize Size of the trade in ETH
-     * @param currentReserve Current ETH reserve
-     * @return Price impact percentage
-     */
+    function withdrawPendingPayments() external nonReentrant {
+        uint256 amount = _pendingWithdrawals[msg.sender];
+        if (amount == 0) revert NoPendingPayments();
+        if (address(this).balance < amount) revert InsufficientBalance();
+
+        _pendingWithdrawals[msg.sender] = 0;
+
+        (bool success, ) = msg.sender.call{value: amount}("");
+        if (!success) revert TransferFailed();
+
+        emit Withdrawn(msg.sender, amount);
+    }
+
     function calculatePriceImpact(
         uint256 tradeSize,
         uint256 currentReserve
     ) public pure returns (uint256) {
-        return tradeSize * (100 / currentReserve);
+        return ( tradeSize * 100  ) / currentReserve;
     }
 
-    /**
-     * @notice Calculate tokens received for ETH input
-     * @param ethAmount Amount of ETH to spend
-     * @return Token amount to receive
-     */
+
     function calculatePurchaseReturn(
         uint256 ethAmount
     ) public view returns (uint256) {
@@ -278,59 +258,43 @@ contract CypherPupsToken is ERC20, ReentrancyGuard, Pausable, AccessControl {
         return virtualTokenReserve - newVirtualTokenReserve;
     }
 
-    /**
-     * @notice Calculate ETH received for token input
-     * @param tokenAmount Amount of tokens to sell
-     * @return ETH amount to receive
-     */
     function calculateSaleReturn(
         uint256 tokenAmount
     ) public view returns (uint256) {
         uint256 k = virtualTokenReserve * virtualEthReserve;
-        uint256 newVirtualTokenReserve = virtualTokenReserve + (tokenAmount * 5) / 100;
+        uint256 newVirtualTokenReserve = virtualTokenReserve +
+            (tokenAmount * 5) /
+            100;
         uint256 newVirtualEthReserve = k / newVirtualTokenReserve;
         return virtualEthReserve - newVirtualEthReserve;
     }
 
-    /**
-     * @notice Migrate remaining tokens and ETH to Uniswap
-     * @dev Can only be called once when migration threshold is met
-     */
     function migrateToUniswap() internal {
-        require(!migrated, "AlreadyMigrated()");
-        require(
-            totalSupply() >= MIGRATION_THRESHOLD,
-            "MigrationThreshHoldNotMet()"
-        );
-        require(virtualTokenReserve > 0, "Zero token reserve");
+        if (migrated) revert AlreadyMigrated();
+        if (totalSupply() < MIGRATION_THRESHOLD)
+            revert MigrationThreshHoldNotMet();
+        if (virtualTokenReserve == 0) revert InvalidAmount();
 
         migrated = true;
 
         uint256 ethForPool = address(this).balance - MIGRATION_FEE;
 
-        // Safely calculate current price with scaling factor to prevent precision loss
         uint256 SCALE = 1e18;
         uint256 currentPrice = (virtualEthReserve * SCALE) /
             virtualTokenReserve;
-        require(currentPrice > 0, "Invalid price");
+        if (currentPrice == 0) revert InvalidAmount();
 
-        // Calculate tokens to migrate with proper scaling
         uint256 tokensToMigrate = (ethForPool * SCALE) / currentPrice;
-        require(tokensToMigrate > 0, "Invalid migration amount");
+        if (tokensToMigrate == 0) revert InvalidAmount();
 
         uint256 tokensToBurn = TOTAL_SUPPLY - totalSupply() - tokensToMigrate;
 
-        // Mint and burn tokens before external calls
         _mint(address(this), tokensToMigrate);
         _burn(address(this), tokensToBurn);
 
-        // Approve before external calls
         _approve(address(this), address(uniswapRouter), tokensToMigrate);
 
-        // Cache token amount to verify after external call
-        uint256 preCallTokenBalance = IERC20(address(this)).balanceOf(
-            address(this)
-        );
+        uint256 preCallTokenBalance = balanceOf(address(this));
 
         try
             uniswapRouter.addLiquidityETH{value: ethForPool}(
@@ -342,12 +306,8 @@ contract CypherPupsToken is ERC20, ReentrancyGuard, Pausable, AccessControl {
                 block.timestamp
             )
         returns (uint256 tokenAmount, uint256 ethAmount, uint256 liquidity) {
-            // Verify state wasn't manipulated during external call
-            require(
-                IERC20(address(this)).balanceOf(address(this)) <=
-                    preCallTokenBalance,
-                "Token balance manipulated"
-            );
+            if (balanceOf(address(this)) > preCallTokenBalance)
+                revert TransferFailed();
 
             address pair = uniswapFactory.getPair(
                 address(this),
@@ -356,36 +316,25 @@ contract CypherPupsToken is ERC20, ReentrancyGuard, Pausable, AccessControl {
             uniswapPair = pair;
             emit MigrationExecuted(ethAmount, tokenAmount, pair);
         } catch {
-            // Even if migration fails, we don't want to allow retrying as state has been modified
             revert("Migration failed");
         }
     }
 
-    /**
-     * @notice Emergency withdrawal in case of critical issues
-     * @dev Only callable by admin in emergency mode
-     */
     function emergencyWithdraw() external nonReentrant onlyRole(ADMIN_ROLE) {
-        require(emergencyMode, "Emergency mode not active");
+        if (!emergencyMode) revert NotAuthorized();
 
         uint256 balance = address(this).balance;
-        require(balance > 0, "No ETH to withdraw");
+        if (balance == 0) revert InvalidAmount();
 
-        // Update state first
         uint256 amountToWithdraw = balance;
-        totalCollectedETH = totalCollectedETH - amountToWithdraw;
+        totalCollectedETH -= amountToWithdraw;
 
-        // External call last
         (bool success, ) = msg.sender.call{value: amountToWithdraw}("");
-        require(success, TransferFailed());
+        if (!success) revert TransferFailed();
 
         emit EmergencyWithdraw(msg.sender, amountToWithdraw);
     }
 
-    /**
-     * @notice Set emergency mode
-     * @param _emergencyMode New emergency mode state
-     */
     function setEmergencyMode(
         bool _emergencyMode
     ) external onlyRole(ADMIN_ROLE) {
@@ -397,16 +346,12 @@ contract CypherPupsToken is ERC20, ReentrancyGuard, Pausable, AccessControl {
         }
     }
 
-    /**
-     * @notice Withdraw accumulated fees post-migration
-     * @dev Only callable by admin after migration
-     */
     function withdrawFees() external nonReentrant onlyRole(ADMIN_ROLE) {
-        require(migrated, NotMigrated());
-        require(address(this).balance >= MIGRATION_FEE, InsufficientBalance());
+        if (!migrated) revert NotMigrated();
+        if (address(this).balance < MIGRATION_FEE) revert InsufficientBalance();
 
         (bool success, ) = msg.sender.call{value: MIGRATION_FEE}("");
-        require(success, TransferFailed());
+        if (!success) revert TransferFailed();
     }
 
     function _update(
@@ -417,11 +362,7 @@ contract CypherPupsToken is ERC20, ReentrancyGuard, Pausable, AccessControl {
         super._update(from, to, amount);
     }
 
-    // Receive function
     receive() external payable {
-        require(
-            msg.sender == address(uniswapRouter),
-            "Only router can send ETH"
-        );
+        if (msg.sender != address(uniswapRouter)) revert NotAuthorized();
     }
 }

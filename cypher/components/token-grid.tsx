@@ -10,6 +10,7 @@ import { useFactory } from "@/lib/provider"
 import { useToken } from "@/lib/tokenProvider"
 
 interface DeployedToken {
+  id: string;
   address: string;
   owner: string;
   name: string;
@@ -17,9 +18,7 @@ interface DeployedToken {
   marketCap: string;
   volume: string;
   price: number;
-  change24h: number;
-  description?: string;
-  createdAt: string;
+  change24h?: number;
 }
 
 interface TokenGridProps {
@@ -41,16 +40,15 @@ export function TokenGrid({ limit }: TokenGridProps) {
           deployedTokens.map(async (token) => {
             // Here you would fetch additional details for each token
             // For now using placeholder data
+            console.log("Token: ", token)
             return {
               ...token,
-              name: `CypherPup ${token.address.slice(0, 6)}`,
-              symbol: "CPUP",
               marketCap: "1.2M",
               volume: "450K",
               price: 5542.543,
-              change24h: 12.5,
+              id: token.address,
               description: "A new CypherPup token instance.",
-              createdAt: new Date(token.timestamp * 1000).toLocaleString()
+              change24h: 120.3,
             };
           })
         );
@@ -81,7 +79,7 @@ export function TokenGrid({ limit }: TokenGridProps) {
           return Number(b.volume.replace(/[^0-9.-]+/g,"")) - 
                  Number(a.volume.replace(/[^0-9.-]+/g,""));
         default:
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+            return 0;
       }
     })
     .slice(0, limit);

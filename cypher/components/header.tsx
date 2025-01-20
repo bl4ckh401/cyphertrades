@@ -12,11 +12,11 @@ export function Header() {
   const { address, connecting, connectWallet } = useFactory()
 
   return (
-    <header className="fixed top-0 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-50">
+    <header className="fixed top-0 w-full flex flex-row items-center justify-center border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-50">
       <div className="container flex h-16 items-center justify-between">
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-center space-x-2">
-            <Image src="/placeholder.svg" alt="CypherPup" width={32} height={32} />
+            <Image src="/cyp.png" alt="CypherPup" width={32} height={32} />
             <span className="text-xl font-bold">CypherPup</span>
           </Link>
           <nav className="hidden md:flex items-center space-x-6">

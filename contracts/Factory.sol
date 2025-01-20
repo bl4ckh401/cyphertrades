@@ -53,7 +53,9 @@ contract CypherPupsFactory is AccessControl {
         CypherPupsToken token = new CypherPupsToken(
             uniswapRouter,
             uniswapFactory,
-            admin
+            admin,
+            name,
+            symbol
         );
 
         isValidCypherPups[address(token)] = true;

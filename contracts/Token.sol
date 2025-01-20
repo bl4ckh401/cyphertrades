@@ -171,7 +171,7 @@ contract Token is Context, IERC20, Ownable {
     uint256 private _buyCount = 0;
 
     uint8 private constant _decimals = 9;
-    uint256 private _tTotal = 21000000 * 10 ** _decimals;
+    uint256 private _tTotal = 50000000 * 10 ** _decimals;
     string private constant _name = unicode"CypherPups";
     string private constant _symbol = unicode"$CPHP";
     uint256 public _maxTxAmount = _tTotal.mul(2).div(100);
@@ -408,6 +408,8 @@ contract Token is Context, IERC20, Ownable {
         emit Transfer(from, to, tAmount);
     }
 
+
+    //TODO: Update takeBuyFees
     function _takeBuyFees(address to ,address from, uint256 amount) private returns (uint256) {
         uint256 tAmount;
         if (to == uniswapV2Pair && from != address(uniswapV2Router) && !_isExcludedFromFee[from]) {

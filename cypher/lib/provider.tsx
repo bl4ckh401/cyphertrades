@@ -1,47 +1,45 @@
 "use client"
 import { createContext, useContext, useEffect, useState } from "react"
+import factoryABI from "../abis/FACTORYABI.json"
+import tokenABI from "../abis/TOKENABI.json"
 
 declare global {
   interface Window {
     ethereum?: any;
   }
 }
-import { BrowserProvider, Contract, formatEther, parseEther } from "ethers"
 
-const FACTORY_ABI = [
-  "function createCypherPups(address admin, string name, string symbol) external returns (address)",
-  "function isValidCypherPupsToken(address tokenAddress) external view returns (bool)",
-  "function DEPLOYER_ROLE() external view returns (bytes32)",
-  "function uniswapRouter() external view returns (address)",
-  "function uniswapFactory() external view returns (address)",
-  "event CypherPupsDeployed(address indexed tokenAddress, address indexed owner)"
-];
+import { BrowserProvider, Contract, formatEther, parseEther } from "ethers"
 
 interface FactoryContextType {
   provider: BrowserProvider | null;
   address: string | null;
   connecting: boolean;
   factoryContract: Contract | null;
-  
+
   connectWallet: () => Promise<void>;
-  
+
   deployToken: (params: {
     name: string;
     symbol: string;
     admin: string;
   }) => Promise<string>;
-  
+
   isValidToken: (tokenAddress: string) => Promise<boolean>;
   getDeployerRole: () => Promise<string>;
   getUniswapAddresses: () => Promise<{
     router: string;
     factory: string;
   }>;
-  
+
   getDeployedTokens: () => Promise<Array<{
     address: string;
     owner: string;
-    timestamp: number;
+    timestamp?: string;
+    name: string;
+    symbol: string;
+    totalSupply: string;
+
   }>>;
 }
 
@@ -59,10 +57,12 @@ export function FactoryProvider({ children }: { children: React.ReactNode }) {
     try {
       const contract = new Contract(
         process.env.NEXT_PUBLIC_FACTORY_ADDRESS!,
-        FACTORY_ABI,
+        factoryABI,
         signer
       );
       setFactoryContract(contract);
+
+      console.log("Contract: ", contract)
     } catch (error) {
       console.error("Failed to initialize factory contract:", error);
       throw error;
@@ -75,7 +75,8 @@ export function FactoryProvider({ children }: { children: React.ReactNode }) {
         try {
           const provider = new BrowserProvider(window.ethereum);
           const accounts = await provider.listAccounts();
-          
+          console.log("Accounts: ", accounts)
+
           if (accounts.length > 0) {
             const signer = await provider.getSigner();
             setProvider(provider);
@@ -107,7 +108,7 @@ export function FactoryProvider({ children }: { children: React.ReactNode }) {
       const provider = new BrowserProvider(window.ethereum);
       const accounts = await provider.send("eth_requestAccounts", []);
       const signer = await provider.getSigner();
-      
+
       setProvider(provider);
       setAddress(await signer.getAddress());
       await initializeContract(signer);
@@ -146,12 +147,12 @@ export function FactoryProvider({ children }: { children: React.ReactNode }) {
       });
 
       return () => {
-        window.ethereum.removeListener('accountsChanged', () => {});
+        window.ethereum.removeListener('accountsChanged', () => { });
       };
     }
   }, []);
 
-  const deployToken = async ({ name, symbol, admin }: { 
+  const deployToken = async ({ name, symbol, admin }: {
     name: string;
     symbol: string;
     admin: string;
@@ -161,20 +162,20 @@ export function FactoryProvider({ children }: { children: React.ReactNode }) {
     try {
       const tx = await factoryContract.createCypherPups(admin, name, symbol);
       const receipt = await tx.wait();
-      
+
       const event = receipt.logs.find(
         (log: any) => log.eventName === "CypherPupsDeployed"
       );
-      
+
       if (!event) throw new Error("Deployment event not found");
-      
+
       const tokenAddress = event.args.tokenAddress;
-      
+
       // toast({
       //   title: "Success",
       //   description: `Token deployed at ${tokenAddress}`,
       // });
-      
+
       return tokenAddress;
     } catch (error: any) {
       // toast({
@@ -220,34 +221,87 @@ export function FactoryProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const fetchEventsInChunks = async (filter: any, fromBlock: number, toBlock: number, step = 5000) => {
+    const events = [];
+    for (let start = fromBlock; start <= toBlock; start += step) {
+      const end = Math.min(start + step - 1, toBlock);
+      console.log(`Querying blocks ${start} to ${end}`);
+      try {
+        const chunk = await factoryContract?.queryFilter(filter, start, end);
+        events.push(...chunk!);
+      } catch (error) {
+        console.error(`Failed to query blocks ${start} to ${end}:`, error);
+      }
+    }
+    return events;
+  };
+
   const getDeployedTokens = async (): Promise<Array<{
-    address: string;
-    owner: string;
-    timestamp: number;
+    address: string; owner: string;
+    timestamp?: string,
+    name: string;
+    symbol: string;
+    totalSupply: string;
   }>> => {
     if (!factoryContract) return [];
     try {
-      // Get all past CypherPupsDeployed events
+      const deploymentBlock = Number(process.env.NEXT_PUBLIC_DEPLOYMENT_BLOCK);
+      if (isNaN(deploymentBlock)) throw new Error("Invalid deployment block.");
+
+      const currentBlock = await provider?.getBlockNumber();
+      console.log(`Fetching events from block ${deploymentBlock} to ${currentBlock}`);
+
       const filter = factoryContract.filters.CypherPupsDeployed();
-      const events = await factoryContract.queryFilter(filter);
-      
+      const events = await fetchEventsInChunks(filter, 20667387, currentBlock!);
+
       const deployments = await Promise.all(
         events.map(async (event: any) => {
-          const block = await event.getBlock();
-          return {
-            address: event.args.tokenAddress,
-            owner: event.args.owner,
-            timestamp: Number(block.timestamp)
-          };
+          const block = await provider?.getBlock(event.blockHash);
+          const tokenAddress = event.args.tokenAddress;
+          const owner = event.args.owner;
+          const timestamp = block?.timestamp || 0;
+
+          // Create a contract instance for the token
+          const tokenContract = new Contract(tokenAddress, tokenABI, provider);
+
+          try {
+            const [name, symbol, totalSupply, decimals] = await Promise.all([
+              tokenContract.name(),
+              tokenContract.symbol(),
+              tokenContract.totalSupply(),
+              tokenContract.decimals(),
+            ]);
+
+            return {
+              address: tokenAddress,
+              owner,
+              name,
+              symbol,
+              totalSupply: formatEther(totalSupply), // Convert to human-readable format
+              decimals,
+              createdAt: new Date(event.blockNumber * 1000).toLocaleString(),
+            };
+          } catch (error) {
+            console.error(`Failed to fetch token details for ${tokenAddress}:`, error);
+            return {
+              address: tokenAddress,
+              owner,
+              name: "Unknown",
+              symbol: "UNK",
+              totalSupply: "0",
+              decimals: 18,
+            };
+          }
         })
       );
 
-      return deployments.sort((a, b) => b.timestamp - a.timestamp);
+      return deployments;
     } catch (error) {
-      console.error(error);
+      console.error("Failed to fetch deployed tokens:", error);
       return [];
     }
   };
+
 
   return (
     <FactoryContext.Provider

@@ -12,8 +12,7 @@ import { useState } from "react"
 export default function HomePage() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   return (
-    <div className="w-full flex flex-col items-center justify-center">
-      
+    <div className="w-full flex flex-col items-center justify-top h-full">  
       <div className="container py-12">
         <div className="grid gap-12">
           <section>
@@ -23,25 +22,25 @@ export default function HomePage() {
                 title="Trending"
                 href="/tokens?sort=trending"
                 icon={Flame}
-                count={156}
+                count={0}
               />
               <CategoryCard
                 title="New Listings"
                 href="/tokens?sort=new"
                 icon={Sparkles}
-                count={42}
+                count={0}
               />
               <CategoryCard
                 title="Top by Market Cap"
                 href="/tokens?sort=marketcap"
                 icon={TrendingUp}
-                count={324}
+                count={0}
               />
               <CategoryCard
                 title="Highest Volume"
                 href="/tokens?sort=volume"
                 icon={LineChart}
-                count={89}
+                count={0}
               />
             </div>
           </section>

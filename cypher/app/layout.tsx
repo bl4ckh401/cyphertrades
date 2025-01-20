@@ -24,7 +24,7 @@ export default function RootLayout({
             <div className="relative min-h-screen w-screen">
               <div className="fixed inset-0 noise-bg w-screen flex flex-col justify-center items-center" />
               <Header />
-              <main className="relative w-screen flex flex-col items-center justify-center">
+              <main className="relative w-screen flex flex-col items-center min-h-screen pt-16">
                 {children}
               </main>
             </div>
